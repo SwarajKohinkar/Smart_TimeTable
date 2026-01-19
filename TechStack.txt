@@ -1,0 +1,21 @@
+Frontend Stack:-
+React (Vite)
+Tailwind CSS
+shadcn/ui
+JavaScript
+Axios
+Deployment: Vercel
+
+Backend Stack:-
+Python
+FastAPI
+Uvicorn
+SQLAlchemy
+NumPy / Pandas (for logic & optimization)
+Genetic Algorithm (custom or library-based)
+Deployment: Render
+
+Database Stack:-
+SQLite (local development)
+Supabase (PostgreSQL) for production
+Supabase also used for hosted database management
