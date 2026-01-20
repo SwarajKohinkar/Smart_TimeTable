@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from app.database import SessionLocal
 from app.models import TimetableConfig
 from app.services.slot_generator import generate_weekly_slots
+from app.services.timetable_ai import generate_ai_timetable
 
 router = APIRouter()
 
@@ -34,3 +35,9 @@ def generate_slots(db: Session = Depends(get_db)):
         "working_days": config.working_days,
         "timetable": timetable
     }
+
+
+@router.get("/generate-ai-timetable")
+def generate_ai(db: Session = Depends(get_db)):
+    timetable = generate_ai_timetable(db)
+    return {"timetable": timetable}
