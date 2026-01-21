@@ -30,7 +30,8 @@ def fitness(chromosome, subjects_map, lecture_slots):
             continue
 
         day = lecture_slots[idx]["day"]
-        subject_type = subjects_map[subject]["type"]
+        subject_type = subjects_map[subject]["category"]
+
 
         # Base reward
         score += 5

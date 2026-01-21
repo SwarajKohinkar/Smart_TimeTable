@@ -21,6 +21,7 @@ SessionLocal = sessionmaker(
 
 Base = declarative_base()
 
+
 3) SMART_TIMETABLE/backend/app/main.py :
 
 from fastapi import FastAPI
@@ -40,22 +41,64 @@ app = FastAPI(
 app.include_router(input_router, prefix="/api", tags=["Inputs"])
 app.include_router(timetable_router, prefix="/api", tags=["Timetable"])
 
+
 4) SMART_TIMETABLE/backend/app/models.py :
 
-from sqlalchemy import Column, Integer, String
+from sqlalchemy import Column, Integer, String, Boolean, ForeignKey
+from sqlalchemy.orm import relationship
 from app.database import Base
 
+# Division Model
+class Division(Base):
+    __tablename__ = "divisions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, index=True)  # A, B, C
+
+
+# Teacher Model
+
+class Teacher(Base):
+    __tablename__ = "teachers"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, index=True)
+
+
+# Subject Model
 
 class Subject(Base):
     __tablename__ = "subjects"
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, index=True)
-    subject_type = Column(String)
+
+    # Academic category (Major, Minor, OpenElective, COI, UHV, etc.)
+    category = Column(String)
+
+    # Lecture or Lab
+    is_lab = Column(Boolean, default=False)
+
+    # Weekly hours (labs may have higher values)
     weekly_hours = Column(Integer)
+
+    # Number of teachers allowed for this subject
     teachers_required = Column(Integer)
 
 
+
+# Subject ↔ Teacher Mapping
+class SubjectTeacher(Base):
+    __tablename__ = "subject_teachers"
+
+    id = Column(Integer, primary_key=True, index=True)
+    subject_id = Column(Integer, ForeignKey("subjects.id"))
+    teacher_id = Column(Integer, ForeignKey("teachers.id"))
+
+    subject = relationship("Subject")
+    teacher = relationship("Teacher")
+
+# Timetable Configuration
 class TimetableConfig(Base):
     __tablename__ = "timetable_config"
 
@@ -66,17 +109,52 @@ class TimetableConfig(Base):
     break_count = Column(Integer)
     break_duration = Column(Integer)
 
+
+
 5) SMART_TIMETABLE/backend/app/schemas.py :
 
 from pydantic import BaseModel
+from typing import Optional
 
+# Division Schemas
+class DivisionCreate(BaseModel):
+    name: str
+
+
+# Teacher Schemas
+
+class TeacherCreate(BaseModel):
+    name: str
+
+
+
+# Subject Schemas
 
 class SubjectCreate(BaseModel):
     name: str
-    subject_type: str
+
+    # Major / Minor / OpenElective / COI / UHV etc.
+    category: str
+
+    # True = Lab, False = Lecture
+    is_lab: bool = False
+
+    # Weekly hours (labs usually higher)
     weekly_hours: int
+
+    # Number of teachers available for this subject
     teachers_required: int
 
+
+
+# Subject–Teacher Mapping Schema
+
+class SubjectTeacherCreate(BaseModel):
+    subject_id: int
+    teacher_id: int
+
+
+# Timetable Configuration Schema
 
 class TimetableConfigCreate(BaseModel):
     working_days: int
@@ -94,12 +172,15 @@ class TimetableConfigCreate(BaseModel):
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
+
 from app.database import SessionLocal
 from app import models, schemas
 
-router = APIRouter()   
+router = APIRouter()
 
 
+
+# DB Dependency
 def get_db():
     db = SessionLocal()
     try:
@@ -107,6 +188,27 @@ def get_db():
     finally:
         db.close()
 
+# Division APIs
+
+@router.post("/divisions")
+def add_division(division: schemas.DivisionCreate, db: Session = Depends(get_db)):
+    new_division = models.Division(**division.dict())
+    db.add(new_division)
+    db.commit()
+    return {"message": "Division added successfully"}
+
+# Teacher APIs
+
+@router.post("/teachers")
+def add_teacher(teacher: schemas.TeacherCreate, db: Session = Depends(get_db)):
+    new_teacher = models.Teacher(**teacher.dict())
+    db.add(new_teacher)
+    db.commit()
+    return {"message": "Teacher added successfully"}
+
+
+
+# Subject APIs (Lecture / Lab)
 
 @router.post("/subjects")
 def add_subject(subject: schemas.SubjectCreate, db: Session = Depends(get_db)):
@@ -116,6 +218,19 @@ def add_subject(subject: schemas.SubjectCreate, db: Session = Depends(get_db)):
     return {"message": "Subject added successfully"}
 
 
+# Subject ↔ Teacher Mapping
+
+@router.post("/subject-teachers")
+def assign_teacher(
+    mapping: schemas.SubjectTeacherCreate,
+    db: Session = Depends(get_db)
+):
+    new_mapping = models.SubjectTeacher(**mapping.dict())
+    db.add(new_mapping)
+    db.commit()
+    return {"message": "Teacher assigned to subject successfully"}
+
+# Timetable Configuration
 @router.post("/config")
 def add_config(config: schemas.TimetableConfigCreate, db: Session = Depends(get_db)):
     new_config = models.TimetableConfig(**config.dict())
@@ -124,16 +239,20 @@ def add_config(config: schemas.TimetableConfigCreate, db: Session = Depends(get_
     return {"message": "Timetable configuration saved"}
 
 
+
 8) SMART_TIMETABLE/backend/app/routers/timetable.py :
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
+
 from app.database import SessionLocal
 from app.models import TimetableConfig
 from app.services.slot_generator import generate_weekly_slots
+from app.services.timetable_ai import generate_ai_timetable
 
 router = APIRouter()
 
+# DB Dependency
 
 def get_db():
     db = SessionLocal()
@@ -142,6 +261,7 @@ def get_db():
     finally:
         db.close()
 
+# Slot Preview API (unchanged)
 
 @router.get("/generate-slots")
 def generate_slots(db: Session = Depends(get_db)):
@@ -163,13 +283,211 @@ def generate_slots(db: Session = Depends(get_db)):
         "timetable": timetable
     }
 
+
+# AI Timetable API (NEW)
+
+@router.get("/generate-ai-timetable")
+def generate_ai(db: Session = Depends(get_db)):
+    timetable = generate_ai_timetable(db)
+    return {
+        "timetable": timetable
+    }
+
+
 9) SMART_TIMETABLE/backend/app/services/constraints.py :
 
-#empty
+from typing import List, Dict
+from collections import defaultdict
+
+# Slot Utilities
+
+def extract_lecture_slots(weekly_slots: Dict) -> List[Dict]:
+    """
+    Extract only lecture/lab slots from the weekly slot structure.
+    Breaks are ignored.
+    """
+    lecture_slots = []
+
+    for day, slots in weekly_slots.items():
+        for slot in slots:
+            if slot["type"] == "lecture":
+                lecture_slots.append({
+                    "day": day,
+                    "time": slot["time"]
+                })
+
+    return lecture_slots
+
+# Subject Expansion
+
+def expand_subjects(subjects) -> List[str]:
+    """
+    Expand subjects based on weekly hours.
+    Example:
+    Python (4 hours) → ["Python", "Python", "Python", "Python"]
+    """
+    expanded = []
+
+    for subject in subjects:
+        for _ in range(subject.weekly_hours):
+            expanded.append(subject.name)
+
+    return expanded
+
+# NEP / MEP 2020 Mandatory Enforcement
+
+def enforce_nep_policies(subjects):
+    """
+    Enforce mandatory NEP / MEP rules:
+    - At least 2 Open Elective lectures per week
+    - At least 1 COI or UHV lecture per week
+    """
+    has_open_elective = False
+    has_coi_or_uhv = False
+
+    for subject in subjects:
+        if subject.category == "OpenElective":
+            has_open_elective = True
+            if subject.weekly_hours < 2:
+                subject.weekly_hours = 2
+
+        if subject.category in ("COI", "UHV"):
+            has_coi_or_uhv = True
+            if subject.weekly_hours < 1:
+                subject.weekly_hours = 1
+
+    # Auto-add if missing
+    if not has_open_elective:
+        from app.models import Subject
+        subjects.append(
+            Subject(
+                name="Open Elective",
+                category="OpenElective",
+                is_lab=False,
+                weekly_hours=2,
+                teachers_required=1
+            )
+        )
+
+    if not has_coi_or_uhv:
+        from app.models import Subject
+        subjects.append(
+            Subject(
+                name="COI",
+                category="COI",
+                is_lab=False,
+                weekly_hours=1,
+                teachers_required=1
+            )
+        )
+
+    return subjects
+
+# Weekly Hour Violation
+
+def violates_weekly_hours(chromosome, subjects_map):
+    subject_count = defaultdict(int)
+
+    for subject in chromosome:
+        if subject is None:
+            continue
+        subject_count[subject] += 1
+
+    for subject, count in subject_count.items():
+        if count > subjects_map[subject]["hours"]:
+            return True
+
+    return False
+
+# Teacher Clash Constraint (Foundation)
+
+def violates_teacher_clash(assignments):
+    """
+    assignments:
+    {
+        (day, time): [teacher_id, teacher_id, ...]
+    }
+    """
+    for teachers in assignments.values():
+        if len(teachers) != len(set(teachers)):
+            return True
+    return False
+
 
 10) SMART_TIMETABLE/backend/app/services/genetic_algorithm.py :
 
-#empty 
+import random
+from typing import List
+
+
+def create_chromosome(subject_units: List[str], slot_count: int):
+    """
+    A chromosome is a list where:
+    index = slot index
+    value = subject assigned
+    """
+    chromosome = subject_units.copy()
+
+    # Pad with None if fewer subjects than slots
+    while len(chromosome) < slot_count:
+        chromosome.append(None)
+
+    random.shuffle(chromosome)
+    return chromosome[:slot_count]
+
+
+def fitness(chromosome, subjects_map, lecture_slots):
+    """
+    Higher score = better timetable
+    """
+    score = 0
+    daily_subject_count = {}
+
+    for idx, subject in enumerate(chromosome):
+        if subject is None:
+            continue
+
+        day = lecture_slots[idx]["day"]
+        subject_type = subjects_map[subject]["category"]
+
+
+        # Base reward
+        score += 5
+
+        # Subject type priority (NEP)
+        if subject_type == "Major":
+            score += 3
+        elif subject_type == "Minor":
+            score += 2
+        else:  # MOOC / Sports / Extra
+            score += 1
+
+        # Daily repetition penalty
+        daily_subject_count.setdefault(day, {})
+        daily_subject_count[day].setdefault(subject, 0)
+        daily_subject_count[day][subject] += 1
+
+        if daily_subject_count[day][subject] > 2:
+            score -= 4  # discourage same subject too many times per day
+
+    return score
+
+
+
+def crossover(parent1, parent2):
+    cut = random.randint(1, len(parent1) - 2)
+    child = parent1[:cut] + parent2[cut:]
+    return child
+
+
+def mutate(chromosome, mutation_rate=0.1):
+    for i in range(len(chromosome)):
+        if random.random() < mutation_rate:
+            j = random.randint(0, len(chromosome) - 1)
+            chromosome[i], chromosome[j] = chromosome[j], chromosome[i]
+    return chromosome
+
+
 
 11) SMART_TIMETABLE/backend/app/services/slot_generator.py :
 
@@ -246,7 +564,175 @@ def generate_weekly_slots(
 
     return timetable
 
-12) SMART_TIMETABLE/backend/app/utils/time_utils.py :
+12)SMART_TIMETABLE/backend/app/services/timetable_ai.py :
+
+import random
+from collections import defaultdict
+from sqlalchemy.orm import Session
+
+from app.models import (
+    Subject,
+    TimetableConfig,
+    Division,
+    Teacher,
+    SubjectTeacher
+)
+
+from app.services.slot_generator import generate_weekly_slots
+from app.services.constraints import (
+    extract_lecture_slots,
+    expand_subjects,
+    enforce_nep_policies,
+    violates_weekly_hours,
+    violates_teacher_clash
+)
+
+from app.services.genetic_algorithm import (
+    create_chromosome,
+    fitness,
+    crossover,
+    mutate
+)
+
+
+def generate_ai_timetable(
+    db: Session,
+    generations: int = 60,
+    population_size: int = 12
+):
+
+    # 1. Fetch Base Data
+    config = db.query(TimetableConfig).order_by(TimetableConfig.id.desc()).first()
+    subjects = db.query(Subject).all()
+    divisions = db.query(Division).all()
+    teachers = db.query(Teacher).all()
+    mappings = db.query(SubjectTeacher).all()
+
+    if not config or not subjects or not divisions:
+        return {"error": "Missing configuration, subjects, or divisions"}
+
+    # 2. Enforce NEP / MEP Policies
+    
+    subjects = enforce_nep_policies(subjects)
+
+    # 3. Subject Metadata Map
+
+    subjects_map = {
+        s.name: {
+            "category": s.category,
+            "hours": s.weekly_hours,
+            "is_lab": s.is_lab
+        }
+        for s in subjects
+    }
+
+    # Subject → Teacher list
+    subject_teacher_map = defaultdict(list)
+    for m in mappings:
+        subject_teacher_map[m.subject_id].append(m.teacher_id)
+
+    # 4. Generate Slots
+
+    weekly_slots = generate_weekly_slots(
+        config.working_days,
+        config.start_time,
+        config.end_time,
+        config.break_count,
+        config.break_duration
+    )
+
+    lecture_slots = extract_lecture_slots(weekly_slots)
+
+    # Expand to (division, slot)
+    expanded_slots = []
+    for division in divisions:
+        for slot in lecture_slots:
+            expanded_slots.append({
+                "division": division.name,
+                "day": slot["day"],
+                "time": slot["time"]
+            })
+
+    slot_count = len(expanded_slots)
+
+    # 5. Expand Subjects
+
+    subject_units = expand_subjects(subjects)
+
+    # 6. Initial Population
+    
+    population = [
+        create_chromosome(subject_units, slot_count)
+        for _ in range(population_size)
+    ]
+
+    # 7. Genetic Algorithm Loop
+    
+    for _ in range(generations):
+        # Remove weekly-hour violators
+        population = [
+            c for c in population
+            if not violates_weekly_hours(c, subjects_map)
+        ]
+
+        # Sort by fitness
+        population = sorted(
+            population,
+            key=lambda c: fitness(c, subjects_map, expanded_slots),
+            reverse=True
+        )
+
+        next_gen = population[:2]  # elitism
+
+        while len(next_gen) < population_size:
+            p1, p2 = random.sample(population[:6], 2)
+            child = crossover(p1, p2)
+            child = mutate(child)
+            next_gen.append(child)
+
+        population = next_gen
+
+    # 8. Best Solution
+    
+    best = max(
+        population,
+        key=lambda c: fitness(c, subjects_map, expanded_slots)
+    )
+
+    # 9. Assign Teachers (No Clash)
+    
+    teacher_assignments = defaultdict(list)
+    final_output = defaultdict(list)
+
+    for slot, subject_name in zip(expanded_slots, best):
+        if subject_name is None:
+            continue
+
+        # Get subject ID
+        subject = next(s for s in subjects if s.name == subject_name)
+        teacher_ids = subject_teacher_map.get(subject.id, [])
+
+        assigned_teacher = None
+        for t_id in teacher_ids:
+            key = (slot["day"], slot["time"])
+            if t_id not in teacher_assignments[key]:
+                assigned_teacher = t_id
+                teacher_assignments[key].append(t_id)
+                break
+
+        final_output[slot["division"]].append({
+            "day": slot["day"],
+            "time": slot["time"],
+            "subject": subject_name,
+            "teacher_id": assigned_teacher
+        })
+
+    return final_output
+
+
+
+
+13) SMART_TIMETABLE/backend/app/utils/time_utils.py :
 
 def time_to_minutes(time_str: str) -> int:
     """Convert HH:MM to total minutes"""
@@ -264,4 +750,3 @@ def minutes_to_time(minutes: int) -> str:
 def format_slot(start_min: int, end_min: int) -> str:
     """Format a slot as HH:MM-HH:MM"""
     return f"{minutes_to_time(start_min)}-{minutes_to_time(end_min)}"
-

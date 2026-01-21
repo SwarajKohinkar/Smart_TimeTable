@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
+
 from app.database import SessionLocal
 from app.models import TimetableConfig
 from app.services.slot_generator import generate_weekly_slots
@@ -7,6 +8,7 @@ from app.services.timetable_ai import generate_ai_timetable
 
 router = APIRouter()
 
+# DB Dependency
 
 def get_db():
     db = SessionLocal()
@@ -15,6 +17,7 @@ def get_db():
     finally:
         db.close()
 
+# Slot Preview API (unchanged)
 
 @router.get("/generate-slots")
 def generate_slots(db: Session = Depends(get_db)):
@@ -37,7 +40,11 @@ def generate_slots(db: Session = Depends(get_db)):
     }
 
 
+# AI Timetable API (NEW)
+
 @router.get("/generate-ai-timetable")
 def generate_ai(db: Session = Depends(get_db)):
     timetable = generate_ai_timetable(db)
-    return {"timetable": timetable}
+    return {
+        "timetable": timetable
+    }
