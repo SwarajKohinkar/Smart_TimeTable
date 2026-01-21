@@ -1,0 +1,267 @@
+1) SMART_TIMETABLE/backend/app/__init__.py :
+    #empty
+
+2) SMART_TIMETABLE/backend/app/database.py :
+
+    from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, declarative_base
+
+DATABASE_URL = "sqlite:///./timetable.db"
+
+engine = create_engine(
+    DATABASE_URL,
+    connect_args={"check_same_thread": False}
+)
+
+SessionLocal = sessionmaker(
+    autocommit=False,
+    autoflush=False,
+    bind=engine
+)
+
+Base = declarative_base()
+
+3) SMART_TIMETABLE/backend/app/main.py :
+
+from fastapi import FastAPI
+from app.database import engine
+from app import models
+from app.routers.inputs import router as input_router
+from app.routers.timetable import router as timetable_router
+
+models.Base.metadata.create_all(bind=engine)
+
+app = FastAPI(
+    title="AI Timetable Generator",
+    docs_url="/docs",
+    redoc_url="/redoc"
+)
+
+app.include_router(input_router, prefix="/api", tags=["Inputs"])
+app.include_router(timetable_router, prefix="/api", tags=["Timetable"])
+
+4) SMART_TIMETABLE/backend/app/models.py :
+
+from sqlalchemy import Column, Integer, String
+from app.database import Base
+
+
+class Subject(Base):
+    __tablename__ = "subjects"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, index=True)
+    subject_type = Column(String)
+    weekly_hours = Column(Integer)
+    teachers_required = Column(Integer)
+
+
+class TimetableConfig(Base):
+    __tablename__ = "timetable_config"
+
+    id = Column(Integer, primary_key=True, index=True)
+    working_days = Column(Integer)
+    start_time = Column(String)
+    end_time = Column(String)
+    break_count = Column(Integer)
+    break_duration = Column(Integer)
+
+5) SMART_TIMETABLE/backend/app/schemas.py :
+
+from pydantic import BaseModel
+
+
+class SubjectCreate(BaseModel):
+    name: str
+    subject_type: str
+    weekly_hours: int
+    teachers_required: int
+
+
+class TimetableConfigCreate(BaseModel):
+    working_days: int
+    start_time: str
+    end_time: str
+    break_count: int
+    break_duration: int
+
+
+6) SMART_TIMETABLE/backend/app/routers/__init__.py :
+
+  # empty
+
+7) SMART_TIMETABLE/backend/app/routers/inputs.py :
+
+from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
+from app.database import SessionLocal
+from app import models, schemas
+
+router = APIRouter()   
+
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+@router.post("/subjects")
+def add_subject(subject: schemas.SubjectCreate, db: Session = Depends(get_db)):
+    new_subject = models.Subject(**subject.dict())
+    db.add(new_subject)
+    db.commit()
+    return {"message": "Subject added successfully"}
+
+
+@router.post("/config")
+def add_config(config: schemas.TimetableConfigCreate, db: Session = Depends(get_db)):
+    new_config = models.TimetableConfig(**config.dict())
+    db.add(new_config)
+    db.commit()
+    return {"message": "Timetable configuration saved"}
+
+
+8) SMART_TIMETABLE/backend/app/routers/timetable.py :
+
+from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
+from app.database import SessionLocal
+from app.models import TimetableConfig
+from app.services.slot_generator import generate_weekly_slots
+
+router = APIRouter()
+
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+@router.get("/generate-slots")
+def generate_slots(db: Session = Depends(get_db)):
+    config = db.query(TimetableConfig).order_by(TimetableConfig.id.desc()).first()
+
+    if not config:
+        return {"error": "Timetable configuration not found"}
+
+    timetable = generate_weekly_slots(
+        working_days=config.working_days,
+        start_time=config.start_time,
+        end_time=config.end_time,
+        break_count=config.break_count,
+        break_duration=config.break_duration,
+    )
+
+    return {
+        "working_days": config.working_days,
+        "timetable": timetable
+    }
+
+9) SMART_TIMETABLE/backend/app/services/constraints.py :
+
+#empty
+
+10) SMART_TIMETABLE/backend/app/services/genetic_algorithm.py :
+
+#empty 
+
+11) SMART_TIMETABLE/backend/app/services/slot_generator.py :
+
+from app.utils.time_utils import time_to_minutes, format_slot
+
+
+def generate_daily_slots(
+    start_time: str,
+    end_time: str,
+    break_count: int,
+    break_duration: int,
+    lecture_duration: int = 60,
+):
+    """
+    Generate slots for a single day with breaks included.
+    """
+    start_min = time_to_minutes(start_time)
+    end_min = time_to_minutes(end_time)
+
+    slots = []
+    current = start_min
+    breaks_inserted = 0
+
+    while current + lecture_duration <= end_min:
+        # Insert break evenly after some lectures
+        if break_count > 0 and breaks_inserted < break_count:
+            # heuristic: add a break after every 2 lectures
+            if len(slots) > 0 and len(slots) % 2 == 0:
+                break_start = current
+                break_end = current + break_duration
+                if break_end <= end_min:
+                    slots.append({
+                        "type": "break",
+                        "time": format_slot(break_start, break_end)
+                    })
+                    current = break_end
+                    breaks_inserted += 1
+                    continue
+
+        # Lecture slot
+        slot_start = current
+        slot_end = current + lecture_duration
+        slots.append({
+            "type": "lecture",
+            "time": format_slot(slot_start, slot_end)
+        })
+        current = slot_end
+
+    return slots
+
+
+def generate_weekly_slots(
+    working_days: int,
+    start_time: str,
+    end_time: str,
+    break_count: int,
+    break_duration: int,
+):
+    """
+    Generate Day × Slot matrix for the full week.
+    """
+    day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
+    daily_slots = generate_daily_slots(
+        start_time=start_time,
+        end_time=end_time,
+        break_count=break_count,
+        break_duration=break_duration,
+    )
+
+    timetable = {}
+    for i in range(working_days):
+        timetable[day_names[i]] = daily_slots
+
+    return timetable
+
+12) SMART_TIMETABLE/backend/app/utils/time_utils.py :
+
+def time_to_minutes(time_str: str) -> int:
+    """Convert HH:MM to total minutes"""
+    hours, minutes = map(int, time_str.split(":"))
+    return hours * 60 + minutes
+
+
+def minutes_to_time(minutes: int) -> str:
+    """Convert total minutes to HH:MM"""
+    hours = minutes // 60
+    mins = minutes % 60
+    return f"{hours:02d}:{mins:02d}"
+
+
+def format_slot(start_min: int, end_min: int) -> str:
+    """Format a slot as HH:MM-HH:MM"""
+    return f"{minutes_to_time(start_min)}-{minutes_to_time(end_min)}"
+

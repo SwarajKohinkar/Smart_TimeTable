@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from app.database import SessionLocal
 from app import models, schemas
 
-router = APIRouter()   # 👈 THIS IS IMPORTANT
+router = APIRouter()   
 
 
 def get_db():
