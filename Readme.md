@@ -17,7 +17,7 @@ Number of breaks and duration of each break
 
 Subjects with:
 
-Subject type (Major / Minor / MOOC / Sports / Extracurricular)
+Subject type (Major / Minor / MOOC / Sports / Extracurricular / OpenElective/ UHV/ COI)
 
 Credits or weekly hours
 
