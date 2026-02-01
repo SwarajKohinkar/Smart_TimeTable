@@ -22,19 +22,26 @@ def extract_lecture_slots(weekly_slots: Dict) -> List[Dict]:
 
 # Subject Expansion
 
-def expand_subjects(subjects) -> List[str]:
+def expand_subjects(subjects, divisions) -> List[tuple]:
     """
-    Expand subjects based on weekly hours.
+    Expand subjects PER DIVISION based on weekly hours.
+
     Example:
-    Python (4 hours) → ["Python", "Python", "Python", "Python"]
+    DBMS (4 hrs), divisions A,B →
+    [
+      ("A","DBMS") x4,
+      ("B","DBMS") x4
+    ]
     """
     expanded = []
 
-    for subject in subjects:
-        for _ in range(subject.weekly_hours):
-            expanded.append(subject.name)
+    for division in divisions:
+        for subject in subjects:
+            for _ in range(subject.weekly_hours):
+                expanded.append((division.name, subject.name))
 
     return expanded
+
 
 # NEP / MEP 2020 Mandatory Enforcement
 
@@ -88,18 +95,23 @@ def enforce_nep_policies(subjects):
 # Weekly Hour Violation
 
 def violates_weekly_hours(chromosome, subjects_map):
-    subject_count = defaultdict(int)
+    """
+    Ensure weekly hours are respected PER DIVISION.
+    """
+    count = defaultdict(int)
 
-    for subject in chromosome:
-        if subject is None:
+    for gene in chromosome:
+        if gene is None:
             continue
-        subject_count[subject] += 1
 
-    for subject, count in subject_count.items():
-        if count > subjects_map[subject]["hours"]:
+        division, subject = gene
+        count[(division, subject)] += 1
+
+        if count[(division, subject)] > subjects_map[subject]["hours"]:
             return True
 
     return False
+
 
 # Teacher Clash Constraint (Foundation)
 

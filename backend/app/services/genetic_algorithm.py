@@ -18,41 +18,43 @@ def create_chromosome(subject_units: List[str], slot_count: int):
     return chromosome[:slot_count]
 
 
-def fitness(chromosome, subjects_map, lecture_slots):
+def fitness(chromosome, subjects_map, expanded_slots):
     """
-    Higher score = better timetable
+    Division-aware fitness function.
     """
     score = 0
-    daily_subject_count = {}
+    daily_count = {}
 
-    for idx, subject in enumerate(chromosome):
-        if subject is None:
+    for idx, gene in enumerate(chromosome):
+        if gene is None:
             continue
 
-        day = lecture_slots[idx]["day"]
-        subject_type = subjects_map[subject]["category"]
+        division, subject = gene
+        day = expanded_slots[idx]["day"]
+        category = subjects_map[subject]["category"]
 
+        key = (division, day)
+        daily_count.setdefault(key, {})
+        daily_count[key].setdefault(subject, 0)
+        daily_count[key][subject] += 1
 
         # Base reward
         score += 5
 
-        # Subject type priority (NEP)
-        if subject_type == "Major":
+        # NEP priority
+        if category == "Major":
             score += 3
-        elif subject_type == "Minor":
+        elif category == "Minor":
             score += 2
-        else:  # MOOC / Sports / Extra
+        else:  # OpenElective / COI / UHV / etc.
             score += 1
 
-        # Daily repetition penalty
-        daily_subject_count.setdefault(day, {})
-        daily_subject_count[day].setdefault(subject, 0)
-        daily_subject_count[day][subject] += 1
-
-        if daily_subject_count[day][subject] > 2:
-            score -= 4  # discourage same subject too many times per day
+        # Penalize same subject too many times per day per division
+        if daily_count[key][subject] > 2:
+            score -= 4
 
     return score
+
 
 
 

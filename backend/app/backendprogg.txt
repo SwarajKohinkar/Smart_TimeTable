@@ -320,19 +320,26 @@ def extract_lecture_slots(weekly_slots: Dict) -> List[Dict]:
 
 # Subject Expansion
 
-def expand_subjects(subjects) -> List[str]:
+def expand_subjects(subjects, divisions) -> List[tuple]:
     """
-    Expand subjects based on weekly hours.
+    Expand subjects PER DIVISION based on weekly hours.
+
     Example:
-    Python (4 hours) → ["Python", "Python", "Python", "Python"]
+    DBMS (4 hrs), divisions A,B →
+    [
+      ("A","DBMS") x4,
+      ("B","DBMS") x4
+    ]
     """
     expanded = []
 
-    for subject in subjects:
-        for _ in range(subject.weekly_hours):
-            expanded.append(subject.name)
+    for division in divisions:
+        for subject in subjects:
+            for _ in range(subject.weekly_hours):
+                expanded.append((division.name, subject.name))
 
     return expanded
+
 
 # NEP / MEP 2020 Mandatory Enforcement
 
@@ -386,18 +393,23 @@ def enforce_nep_policies(subjects):
 # Weekly Hour Violation
 
 def violates_weekly_hours(chromosome, subjects_map):
-    subject_count = defaultdict(int)
+    """
+    Ensure weekly hours are respected PER DIVISION.
+    """
+    count = defaultdict(int)
 
-    for subject in chromosome:
-        if subject is None:
+    for gene in chromosome:
+        if gene is None:
             continue
-        subject_count[subject] += 1
 
-    for subject, count in subject_count.items():
-        if count > subjects_map[subject]["hours"]:
+        division, subject = gene
+        count[(division, subject)] += 1
+
+        if count[(division, subject)] > subjects_map[subject]["hours"]:
             return True
 
     return False
+
 
 # Teacher Clash Constraint (Foundation)
 
@@ -412,6 +424,7 @@ def violates_teacher_clash(assignments):
         if len(teachers) != len(set(teachers)):
             return True
     return False
+
 
 
 10) SMART_TIMETABLE/backend/app/services/genetic_algorithm.py :
@@ -436,41 +449,43 @@ def create_chromosome(subject_units: List[str], slot_count: int):
     return chromosome[:slot_count]
 
 
-def fitness(chromosome, subjects_map, lecture_slots):
+def fitness(chromosome, subjects_map, expanded_slots):
     """
-    Higher score = better timetable
+    Division-aware fitness function.
     """
     score = 0
-    daily_subject_count = {}
+    daily_count = {}
 
-    for idx, subject in enumerate(chromosome):
-        if subject is None:
+    for idx, gene in enumerate(chromosome):
+        if gene is None:
             continue
 
-        day = lecture_slots[idx]["day"]
-        subject_type = subjects_map[subject]["category"]
+        division, subject = gene
+        day = expanded_slots[idx]["day"]
+        category = subjects_map[subject]["category"]
 
+        key = (division, day)
+        daily_count.setdefault(key, {})
+        daily_count[key].setdefault(subject, 0)
+        daily_count[key][subject] += 1
 
         # Base reward
         score += 5
 
-        # Subject type priority (NEP)
-        if subject_type == "Major":
+        # NEP priority
+        if category == "Major":
             score += 3
-        elif subject_type == "Minor":
+        elif category == "Minor":
             score += 2
-        else:  # MOOC / Sports / Extra
+        else:  # OpenElective / COI / UHV / etc.
             score += 1
 
-        # Daily repetition penalty
-        daily_subject_count.setdefault(day, {})
-        daily_subject_count[day].setdefault(subject, 0)
-        daily_subject_count[day][subject] += 1
-
-        if daily_subject_count[day][subject] > 2:
-            score -= 4  # discourage same subject too many times per day
+        # Penalize same subject too many times per day per division
+        if daily_count[key][subject] > 2:
+            score -= 4
 
     return score
+
 
 
 
@@ -486,6 +501,7 @@ def mutate(chromosome, mutation_rate=0.1):
             j = random.randint(0, len(chromosome) - 1)
             chromosome[i], chromosome[j] = chromosome[j], chromosome[i]
     return chromosome
+
 
 
 
@@ -583,8 +599,7 @@ from app.services.constraints import (
     extract_lecture_slots,
     expand_subjects,
     enforce_nep_policies,
-    violates_weekly_hours,
-    violates_teacher_clash
+    violates_weekly_hours
 )
 
 from app.services.genetic_algorithm import (
@@ -605,18 +620,15 @@ def generate_ai_timetable(
     config = db.query(TimetableConfig).order_by(TimetableConfig.id.desc()).first()
     subjects = db.query(Subject).all()
     divisions = db.query(Division).all()
-    teachers = db.query(Teacher).all()
     mappings = db.query(SubjectTeacher).all()
 
     if not config or not subjects or not divisions:
         return {"error": "Missing configuration, subjects, or divisions"}
 
     # 2. Enforce NEP / MEP Policies
-    
     subjects = enforce_nep_policies(subjects)
 
     # 3. Subject Metadata Map
-
     subjects_map = {
         s.name: {
             "category": s.category,
@@ -626,13 +638,12 @@ def generate_ai_timetable(
         for s in subjects
     }
 
-    # Subject → Teacher list
+    # Subject → Teacher mapping
     subject_teacher_map = defaultdict(list)
     for m in mappings:
         subject_teacher_map[m.subject_id].append(m.teacher_id)
 
-    # 4. Generate Slots
-
+    # 4. Generate Weekly Slots
     weekly_slots = generate_weekly_slots(
         config.working_days,
         config.start_time,
@@ -643,7 +654,7 @@ def generate_ai_timetable(
 
     lecture_slots = extract_lecture_slots(weekly_slots)
 
-    # Expand to (division, slot)
+    # Expand slots per division
     expanded_slots = []
     for division in divisions:
         for slot in lecture_slots:
@@ -655,34 +666,33 @@ def generate_ai_timetable(
 
     slot_count = len(expanded_slots)
 
-    # 5. Expand Subjects
+    # 5. Expand Subjects PER DIVISION
+    subject_units = expand_subjects(subjects, divisions)
 
-    subject_units = expand_subjects(subjects)
+    # Prevent overflow
+    random.shuffle(subject_units)
+    subject_units = subject_units[:slot_count]
 
     # 6. Initial Population
-    
     population = [
         create_chromosome(subject_units, slot_count)
         for _ in range(population_size)
     ]
 
     # 7. Genetic Algorithm Loop
-    
     for _ in range(generations):
-        # Remove weekly-hour violators
         population = [
             c for c in population
             if not violates_weekly_hours(c, subjects_map)
         ]
 
-        # Sort by fitness
         population = sorted(
             population,
             key=lambda c: fitness(c, subjects_map, expanded_slots),
             reverse=True
         )
 
-        next_gen = population[:2]  # elitism
+        next_gen = population[:2]
 
         while len(next_gen) < population_size:
             p1, p2 = random.sample(population[:6], 2)
@@ -693,28 +703,47 @@ def generate_ai_timetable(
         population = next_gen
 
     # 8. Best Solution
-    
     best = max(
         population,
         key=lambda c: fitness(c, subjects_map, expanded_slots)
     )
 
-    # 9. Assign Teachers (No Clash)
-    
+    # 9. Build FULL timetable (NO MISSING SLOTS)
     teacher_assignments = defaultdict(list)
     final_output = defaultdict(list)
 
-    for slot, subject_name in zip(expanded_slots, best):
-        if subject_name is None:
+    for slot, gene in zip(expanded_slots, best):
+
+        # FREE slot
+        if gene is None:
+            final_output[slot["division"]].append({
+                "day": slot["day"],
+                "time": slot["time"],
+                "subject": "FREE",
+                "teacher_id": None
+            })
             continue
 
-        # Get subject ID
+        gene_division, subject_name = gene
+
+        # Division mismatch → FREE
+        if gene_division != slot["division"]:
+            final_output[slot["division"]].append({
+                "day": slot["day"],
+                "time": slot["time"],
+                "subject": "FREE",
+                "teacher_id": None
+            })
+            continue
+
+        # Assign teacher (no clash)
         subject = next(s for s in subjects if s.name == subject_name)
         teacher_ids = subject_teacher_map.get(subject.id, [])
 
         assigned_teacher = None
+        key = (slot["day"], slot["time"])
+
         for t_id in teacher_ids:
-            key = (slot["day"], slot["time"])
             if t_id not in teacher_assignments[key]:
                 assigned_teacher = t_id
                 teacher_assignments[key].append(t_id)
@@ -728,7 +757,6 @@ def generate_ai_timetable(
         })
 
     return final_output
-
 
 
 
