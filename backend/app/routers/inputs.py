@@ -6,8 +6,6 @@ from app import models, schemas
 
 router = APIRouter()
 
-
-
 # DB Dependency
 def get_db():
     db = SessionLocal()
@@ -16,7 +14,9 @@ def get_db():
     finally:
         db.close()
 
+# -------------------------
 # Division APIs
+# -------------------------
 
 @router.post("/divisions")
 def add_division(division: schemas.DivisionCreate, db: Session = Depends(get_db)):
@@ -25,7 +25,13 @@ def add_division(division: schemas.DivisionCreate, db: Session = Depends(get_db)
     db.commit()
     return {"message": "Division added successfully"}
 
+@router.get("/divisions")
+def get_divisions(db: Session = Depends(get_db)):
+    return db.query(models.Division).all()
+
+# -------------------------
 # Teacher APIs
+# -------------------------
 
 @router.post("/teachers")
 def add_teacher(teacher: schemas.TeacherCreate, db: Session = Depends(get_db)):
@@ -34,9 +40,13 @@ def add_teacher(teacher: schemas.TeacherCreate, db: Session = Depends(get_db)):
     db.commit()
     return {"message": "Teacher added successfully"}
 
+@router.get("/teachers")
+def get_teachers(db: Session = Depends(get_db)):
+    return db.query(models.Teacher).all()
 
-
-# Subject APIs (Lecture / Lab)
+# -------------------------
+# Subject APIs
+# -------------------------
 
 @router.post("/subjects")
 def add_subject(subject: schemas.SubjectCreate, db: Session = Depends(get_db)):
@@ -45,8 +55,13 @@ def add_subject(subject: schemas.SubjectCreate, db: Session = Depends(get_db)):
     db.commit()
     return {"message": "Subject added successfully"}
 
+@router.get("/subjects")
+def get_subjects(db: Session = Depends(get_db)):
+    return db.query(models.Subject).all()
 
+# -------------------------
 # Subject ↔ Teacher Mapping
+# -------------------------
 
 @router.post("/subject-teachers")
 def assign_teacher(
@@ -58,7 +73,10 @@ def assign_teacher(
     db.commit()
     return {"message": "Teacher assigned to subject successfully"}
 
+# -------------------------
 # Timetable Configuration
+# -------------------------
+
 @router.post("/config")
 def add_config(config: schemas.TimetableConfigCreate, db: Session = Depends(get_db)):
     new_config = models.TimetableConfig(**config.dict())
