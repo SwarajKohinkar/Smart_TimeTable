@@ -1,0 +1,16 @@
+fastapi
+uvicorn
+sqlalchemy
+pydantic
+pydantic[email]
+numpy
+pandas
+python-multipart
+python-jose[cryptography]
+passlib[bcrypt]
+openpyxl
+
+# Testing
+pytest
+pytest-cov
+httpx
