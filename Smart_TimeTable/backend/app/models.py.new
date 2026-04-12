@@ -1,0 +1,7 @@
+"""
+Deprecated placeholder module.
+
+This file previously contained duplicate SQLAlchemy model definitions and is
+intentionally left without active code. The authoritative models are defined
+in `models.py`.
+"""
